@@ -26,7 +26,7 @@ Different node mask types are available (`N`represents the number of atoms and `
 
 There is only one edge mask type `object` available (`shape [E]`), where `E` is the number of directed GROVER bonds. It contains a value for each edge in a GROVER molecular graph. 
 
-### _get_grover_*_mask
+### _get_grover_\*_mask
 
 Two methods `_get_grover_edge_mask` and `_get_grover_node_mask` are available to prepare the edge and node masks, respectively, if available. 
 
