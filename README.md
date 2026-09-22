@@ -26,13 +26,13 @@ Different node mask types are available (`N`represents the number of atoms and `
 
 There is only one edge mask type `object` available (`shape [E]`), where `E` is the number of directed GROVER bonds. It contains a value for each edge in a GROVER molecular graph. 
 
-### _get_grover_\*_mask
+### `_get_grover_*_mask`
 
 Two methods `_get_grover_edge_mask` and `_get_grover_node_mask` are available to prepare the edge and node masks, respectively, if available. 
 
 They apply sigmoid to the mask values and add a padding term to the mask. 
 
-### _loss
+### `_loss`
 
 This method computes the loss of the learnable masks, composed by three losses:
 
@@ -42,17 +42,17 @@ This method computes the loss of the learnable masks, composed by three losses:
 
 EXPLICAR HARD EDGE AND NODE MASK
 
-### _train
+### `_train`
 
 This method sets the GROVER model to evaluation mode, it initialises the edge and node masks and prepares the optimiser. It calculates the original prediction (the target) and optimises the masks in an epoch loop.  
 
 It calculates the `hard_edge_mask` and the `hard_node_mask` looking at the terms with gradient equal to 0 in the first epoch. 
 
-### _post_process_mask
+### `_post_process_mask`
 
 It processes the masks by applying the sigmoid and removing attributions for elements that did not receive gradients during the first optimisation step (`hard_*_mask = False`).
 
-### forward
+### `forward`
 
 It optimises the masks using the method `_train`, the post-processes the masks and returns the node and edge masks using the `GROVERExplanation` class. 
 
