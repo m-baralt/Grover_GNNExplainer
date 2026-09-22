@@ -719,10 +719,13 @@ class GROVERExplainer:
             device
     ):
         """
-        Initialise the learnable edge mask following PyG GNNExplainer.
+        Initialise the learnable node and edge masks following PyG GNNExplainer.
 
         num_edges here is the number of real directed edges, excluding
         GROVER's padding bond at index 0.
+        num_nodes here is the number of nodes, excluding
+        GROVER's padding bond at index 0.
+        num_node_features here is the number of node features
         """
 
         # Node mask
