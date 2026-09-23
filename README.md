@@ -42,9 +42,7 @@ This method computes the objective used to optimise the masks. It consists of a 
 
 3. **Entropy regularisation:** It computes the binary entropy of a mask value $m$ using
 
-   `
-   H(m)=-m\log(m)-(1-m)\log(1-m).
-   
+   $H(m)=-m\log(m)-(1-m)\log(1-m)$
 
    This function reaches its maximum at `m=0.5` and its minimum at `m=0` and `m=1`. Since this term is minimised, it encourages mask values close to 0 or 1 rather than values around 0.5. The mean entropy is multiplied by `edge_ent` for the edge mask and `node_feat_ent` for the node mask. The default values are 1.0 and 0.1, respectively.
 
