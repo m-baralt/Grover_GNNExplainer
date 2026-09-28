@@ -15,6 +15,10 @@ os.chdir("/home/mabarr/TCruzi_pipeline/")
 from tqdm import tqdm
 import copy
 import matplotlib.pyplot as plt
+from rdkit import Chem
+from rdkit.Chem import Draw
+from rdkit.Chem.Draw import rdMolDraw2D
+
 
 args = Namespace(
     data_path="external/grover/solubility_data/solubility_data_categorized.csv",
@@ -257,6 +261,7 @@ class GROVERExplanation:
         node_mask=None,
         edge_mask=None,
         node_mask_type=None,
+        hard_node_mask=None,
     ):
         self.graph = graph
 
@@ -264,6 +269,8 @@ class GROVERExplanation:
         self.edge_mask = edge_mask
 
         self.node_mask_type = node_mask_type
+
+        self.hard_node_mask = hard_node_mask
 
         (
             self.f_atoms,
@@ -383,6 +390,29 @@ class GROVERExplanation:
 
         return edge_index
 
+    def check_edge_pairing(self):
+
+        edge_index = self.get_edge_index()
+
+        if edge_index.size(1) % 2 != 0:
+            raise ValueError("Odd number of directed edges.")
+
+        for i in range(0, edge_index.size(1), 2):
+
+            src1 = int(edge_index[0, i])
+            dst1 = int(edge_index[1, i])
+
+            src2 = int(edge_index[0, i + 1])
+            dst2 = int(edge_index[1, i + 1])
+
+            if src1 != dst2 or dst1 != src2:
+                raise ValueError(
+                    f"Pair {i // 2} is not reversed: "
+                    f"({src1}, {dst1}) vs ({src2}, {dst2})"
+                )
+
+        return True
+
     def get_undirected_edge_mask(self, reduction="mean"):
         """
         Combine the two directed GROVER edges corresponding to
@@ -414,13 +444,9 @@ class GROVERExplanation:
         # The returned mask therefore contains one value per
         # undirected chemical bond.
 
+        self.check_edge_pairing()
+
         mask = self.edge_mask
-
-        if mask.size(0) % 2 != 0:
-            raise ValueError(
-                "Expected an even number of real directed edges."
-            )
-
         mask = mask.view(-1, 2)
 
         if reduction == "mean":
@@ -533,6 +559,11 @@ class GROVERExplanation:
                 "an object-level node mask."
             )
 
+        if self.hard_node_mask is None:
+            raise ValueError(
+                "The attribute 'hard_node_mask' is not available."
+            )
+
         # For attributes:
         # [num_nodes, num_features]
         #
@@ -545,11 +576,30 @@ class GROVERExplanation:
                 str(i) for i in range(score.numel())
             ]
 
-        if len(feat_labels) != score.numel():
+        if len(feat_labels) != self.node_mask.size(1):
             raise ValueError(
                 "Number of feature labels does not match "
                 "the number of features."
             )
+
+        # Keep features that are active for at least one node.
+        if self.node_mask_type == "attributes":
+            active_features = self.hard_node_mask.any(dim=0)
+        else:
+            active_features = self.hard_node_mask.squeeze(0)
+
+        active_features &= score != 0
+
+        score = score[active_features]
+
+        feat_labels = [
+            label
+            for label, active in zip(
+                feat_labels,
+                active_features.cpu().tolist(),
+            )
+            if active
+        ]
 
         if top_k is not None:
             top_k = min(top_k, score.numel())
@@ -646,6 +696,190 @@ class GROVERExplanation:
         }
 
         return results
+
+    def get_bond_mapping(self, smiles):
+
+        mol = Chem.MolFromSmiles(smiles)
+
+        if mol is None:
+            raise ValueError(
+                f"Invalid SMILES: {smiles}"
+            )
+
+        self.check_edge_pairing()
+
+        edge_index = self.get_edge_index()
+
+        grover_edges = edge_index.T.view(-1, 2, 2)
+
+        grover_bonds = [
+            tuple(sorted((
+                int(pair[0, 0]),
+                int(pair[0, 1]),
+            )))
+            for pair in grover_edges
+        ]
+
+        rdkit_bonds = {
+            tuple(sorted((
+                bond.GetBeginAtomIdx(),
+                bond.GetEndAtomIdx(),
+            ))): bond.GetIdx()
+            for bond in mol.GetBonds()
+        }
+
+        mapping = []
+
+        for grover_bond in grover_bonds:
+
+            if grover_bond not in rdkit_bonds:
+                raise ValueError(
+                    f"GROVER bond {grover_bond} "
+                    "not found in RDKit molecule."
+                )
+
+            mapping.append(rdkit_bonds[grover_bond])
+
+        return mapping
+
+    def check_bond_mapping(self, smiles):
+
+        mol = Chem.MolFromSmiles(smiles)
+
+        if mol is None:
+            raise ValueError(
+                f"Invalid SMILES: {smiles}"
+            )
+
+        self.check_edge_pairing()
+
+        edge_index = self.get_edge_index()
+
+        grover_edges = edge_index.T.view(-1, 2, 2)
+
+        grover_bonds = [
+            tuple(sorted((
+                int(pair[0, 0]),
+                int(pair[0, 1]),
+            )))
+            for pair in grover_edges
+        ]
+
+        rdkit_bonds = [
+            tuple(sorted((
+                bond.GetBeginAtomIdx(),
+                bond.GetEndAtomIdx(),
+            )))
+            for bond in mol.GetBonds()
+        ]
+
+        if set(grover_bonds) != set(rdkit_bonds):
+            raise ValueError(
+                "GROVER and RDKit contain different atom pairs."
+            )
+
+        return True
+
+    def visualize_graph(
+        self,
+        smiles,
+        path=None,
+        size=(500, 500),
+    ):
+        """
+        Visualise the molecule with bond colour intensity
+        representing edge importance.
+
+        Parameters
+        ----------
+        smiles : str
+            SMILES representation of the molecule.
+
+        path : str, optional
+            Path where the image is saved. If None, the image is
+            displayed.
+
+        size : tuple, optional
+            Image size in pixels.
+        """
+
+        if self.edge_mask is None:
+            raise ValueError(
+                "The attribute 'edge_mask' is not available."
+            )
+
+        mol = Chem.MolFromSmiles(smiles)
+
+        if mol is None:
+            raise ValueError(
+                f"Invalid SMILES: {smiles}"
+            )
+
+        # One attribution per chemical bond.
+        self.check_bond_mapping(smiles)
+        bond_importance = self.get_undirected_edge_mask(
+            reduction="max"
+        )
+
+        if bond_importance.numel() != mol.GetNumBonds():
+            raise ValueError(
+                f"Number of GROVER bonds ({bond_importance.numel()}) "
+                f"does not match the number of RDKit bonds "
+                f"({mol.GetNumBonds()})."
+            )
+
+        bond_importance = (
+            bond_importance.detach()
+            .cpu()
+            .numpy()
+        )
+
+        highlight_bonds = list(range(mol.GetNumBonds()))
+
+        # Map importance [0, 1] to light -> strong red.
+        highlight_bond_colors = {}
+
+        bond_mapping = self.get_bond_mapping(smiles)
+
+        for grover_idx, importance in enumerate(bond_importance):
+
+            rdkit_idx = bond_mapping[grover_idx]
+
+            importance = float(importance)
+
+            colour = (
+                1.0,
+                1.0 - importance,
+                1.0 - importance,
+            )
+
+            highlight_bond_colors[rdkit_idx] = colour
+
+        drawer = rdMolDraw2D.MolDraw2DCairo(
+            size[0],
+            size[1],
+        )
+
+        drawer.DrawMolecule(
+            mol,
+            [],                     # highlightAtoms
+            highlight_bonds,        # highlightBonds
+            {},                     # highlightAtomColors
+            highlight_bond_colors,  # highlightBondColors
+        )
+
+        drawer.FinishDrawing()
+
+        image = drawer.GetDrawingText()
+
+        if path is not None:
+            with open(path, "wb") as f:
+                f.write(image)
+
+        else:
+            from IPython.display import display, Image
+
+            display(Image(data=image))
 
 
 
@@ -1054,6 +1288,7 @@ class GROVERExplainer:
             node_mask=node_mask,
             edge_mask=edge_mask,
             node_mask_type=self.node_mask_type,
+            hard_node_mask=self.hard_node_mask,
         )
 
         explanation.validate()
