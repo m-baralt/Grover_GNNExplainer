@@ -9,3 +9,5 @@ venv/
 *.png
 *.pdf
 gcn_solubility_results/*
+
+test.ipynb
