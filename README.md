@@ -6,7 +6,41 @@ The explanation optimises an edge mask and a node mask so that the masked model 
 
 To do so, (1) GROVER architecture is modified to accept an optional edge mask and (2) `GROVERExplainer` and `GROVERExplanation` classes are provided. Here below, both steps are detailed.
 
-## 1. GROVER architecture modification
+## 1. Modifications to GROVER for `GROVERExplainer`
+
+To apply `GROVERExplainer`, the GROVER message-passing operation was modified to support edge masks. The original GROVER implementation aggregates the features of neighbouring atoms without applying any edge-specific weighting. We introduced an optional `edge_mask` argument to the `select_neighbor_and_aggregate` function.
+
+When an edge mask is provided, the corresponding mask value is retrieved for each neighbour and applied to the neighbour representation before aggregation:
+
+```python
+def select_neighbor_and_aggregate(
+        feature,
+        index,
+        a2b=None,
+        edge_mask=None
+):
+    neighbor = index_select_nd(feature, index)
+
+    if edge_mask is not None:
+        edge_weight = edge_mask[a2b]
+        neighbor = neighbor * edge_weight.unsqueeze(-1)
+
+    return neighbor.sum(dim=1)
+```
+
+The edge mask scales the messages passed along individual directed edges. An edge with a mask value close to `1` contributes its message normally, whereas an edge with a value close to `0` has its contribution strongly reduced.
+
+The mask is applied to the neighbour representations before the aggregation step:
+
+$$
+h_i = \sum_{j \in \mathcal{N}(i)} m_{ij} h_j
+$$
+
+where $h_j$ is the representation of neighbour $j$ and $m_{ij}$ is the corresponding edge mask value.
+
+The modification is only active when an `edge_mask` is provided. Therefore, the original GROVER behaviour is preserved during standard model training and inference.
+
+`GROVERExplainer` optimises the edge mask during explanation. The optimised mask is passed to GROVER during the forward pass, allowing the explainer to determine which molecular bonds contribute most to the model prediction.
 
 ## 2. GROVERExplainer and GROVERExplanation
 
